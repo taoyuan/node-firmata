@@ -1,0 +1,11 @@
+{
+  "description": "Digital Read/Write x2; Analog Read x3; I2C Read/Write x2",
+  "serial": true,
+  "time": 5,
+  "timesheet": {
+    "SW_SERIAL0": {
+      "average": 45,
+      "total": 109
+    }
+  }
+}

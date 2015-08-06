@@ -1,0 +1,43 @@
+{
+  "description": "Digital Read/Write x2; Analog Read x3; I2C Read/Write x2, HAS FIX",
+  "serial": true,
+  "time": 5,
+  "timesheet": {
+    "D2": {
+      "average": 36,
+      "total": 64
+    },
+    "D9": {
+      "average": 35,
+      "total": 66
+    },
+    "A0": {
+      "average": 29,
+      "total": 81
+    },
+    "A1": {
+      "average": 29,
+      "total": 81
+    },
+    "A2": {
+      "average": 29,
+      "total": 81
+    },
+    "A3": {
+      "average": 29,
+      "total": 81
+    },
+    "BLINKM": {
+      "average": 29,
+      "total": 80
+    },
+    "ADXL345": {
+      "average": 27,
+      "total": 78
+    },
+    "SW_SERIAL0": {
+      "average": 653,
+      "total": 3
+    }
+  }
+}
