@@ -1,7 +1,8 @@
 var fs = require("fs");
 var argv = require("minimist")(process.argv.slice(2));
+var SerialPort = require("serialport");
 var Board = require("../lib/firmata").Board;
-var board = new Board("/dev/tty.usbmodem1411");
+var rport = /usb|acm|^com/i;
 var savepath = __dirname.indexOf("examples") !== -1 ? __dirname.replace("/examples", "") : __dirname;
 
 if (typeof argv.h !== "undefined" || typeof argv.help !== "undefined") {
@@ -33,8 +34,17 @@ if (typeof argv.h !== "undefined" || typeof argv.help !== "undefined") {
   console.log("     Display each 'punch in'");
   console.log("\n");
 
-  console.log("node examples/components --serial");
-  console.log("     Enable serial read/write portion of test program");
+  console.log("node examples/components --serial='hw'");
+  console.log("node examples/components --serial='sw'");
+  console.log("     Enable hardware or software serial read/write portion of test program");
+  console.log("\n");
+
+  console.log("node examples/components -w");
+  console.log("     Enable the 'write' portion of the serial measurement. This will disable the digital read and write measurements on Port 0.");
+  console.log("\n");
+
+  console.log("node examples/components -r");
+  console.log("     Enable the 'read' portion of the serial measurement. This will disable the digital read and write measurements on Port 1.");
   console.log("\n");
 
   process.exit();
@@ -58,148 +68,212 @@ if (typeof argv.time === "undefined") {
 
 if (typeof argv.serial === "undefined") {
   argv.serial = false;
+
+  // If the -r or -w flags were set, but no serial
+  // measurement specified, shut them off.
+  if (argv.r) {
+    argv.r = false;
+    console.log("Warning: serial read measurement flag detected, but no serial type specified. No measurement will be run or recorded.");
+  }
+
+  if (argv.w) {
+    argv.w = false;
+    console.log("Warning: serial write measurement flag detected, but no serial type specified. No measurement will be run or recorded.");
+  }
 }
 
-board.on("ready", function() {
-  var SW_SERIAL0 = board.SERIAL_PORT_IDs.SW_SERIAL0;
-  var state = 1;
-  var timesheet = {};
-  var log = [];
+if (argv.serial) {
+  // If the serial measurement was specified, but no -r or -w flag
+  // was set, print a warning.
+  if (typeof argv.r === "undefined") {
+    argv.r = false;
+    console.log("Warning: no serial read measurement flag provided. No measurement will be run or recorded.");
+  }
 
-  function punchIn(which) {
-    var now = Date.now();
-    var lapse;
+  if (typeof argv.w === "undefined") {
+    argv.w = false;
+    console.log("Warning: no serial write measurement flag provided. No measurement will be run or recorded.");
+  }
+}
 
-    if (!timesheet[which]) {
-      timesheet[which] = {
-        previous: now,
-        lapses: []
+
+
+SerialPort.list(function(error, devices) {
+  var device = devices.reduce(function(accum, found) {
+    if (rport.test(found.comName)) {
+      return found;
+    }
+    return accum;
+  }, null);
+
+
+  if (!device) {
+    console.log("No board attached.");
+    return;
+  }
+
+  var board = new Board(device.comName);
+
+  board.on("ready", function() {
+    var SW_R = board.SERIAL_PORT_IDs.SW_SERIAL0;
+    var SW_W = board.SERIAL_PORT_IDs.SW_SERIAL1;
+    var HW_R = board.SERIAL_PORT_IDs.HW_SERIAL1;
+    var HW_W = board.SERIAL_PORT_IDs.HW_SERIAL2;
+
+    var isSoftSerial = argv.serial === "sw";
+    var state = 1;
+    var timesheet = {};
+    var log = [];
+
+    function punchIn(which) {
+      var now = Date.now();
+      var lapse;
+
+      if (!timesheet[which]) {
+        timesheet[which] = {
+          previous: now,
+          lapses: []
+        };
+
+        return;
+      }
+
+      lapse = now - timesheet[which].previous;
+
+      timesheet[which].lapses.push(lapse);
+      timesheet[which].previous = now;
+
+      if (argv.display) {
+        console.log("%d, %s, %d", now, which, lapse);
+      }
+
+      log.push([now, which, lapse].join(", "));
+    }
+
+    function summary() {
+      Object.keys(timesheet).forEach(function(key) {
+        timesheet[key].average = average(timesheet[key].lapses);
+        timesheet[key].total = timesheet[key].lapses.length;
+        delete timesheet[key].lapses;
+        delete timesheet[key].previous;
+      });
+
+      var output = {
+        description: argv.description,
+        serial: argv.serial,
+        flags: {
+          read: argv.r,
+          write: argv.w,
+        },
+        time: argv.time,
+        timesheet: timesheet,
+        log: log
       };
 
-      return;
+      fs.writeFileSync(savepath + "/results/" + Date.now() + ".json", JSON.stringify(output, null, 2));
+      process.reallyExit();
     }
 
-    lapse = now - timesheet[which].previous;
-
-    timesheet[which].lapses.push(lapse);
-    timesheet[which].previous = now;
-
-    if (argv.display) {
-      console.log("%d, %s, %d", now, which, lapse);
+    if (!argv.w) {
+      // Port 0
+      // OUT
+      board.pinMode(5, board.MODES.OUTPUT);
+      // IN
+      board.pinMode(6, board.MODES.INPUT);
+      board.digitalRead(6, function(data) {
+        punchIn("D6");
+      });
     }
 
-    log.push([now, which, lapse].join(", "));
-  }
-
-  function summary() {
-    Object.keys(timesheet).forEach(function(key) {
-      timesheet[key].average = average(timesheet[key].lapses);
-      timesheet[key].total = timesheet[key].lapses.length;
-      delete timesheet[key].lapses;
-      delete timesheet[key].previous;
-    });
-
-    var output = {
-      description: argv.description,
-      serial: argv.serial,
-      time: argv.time,
-      timesheet: timesheet,
-      log: log
-    };
-
-    fs.writeFileSync(savepath + "/results/" + Date.now() + ".json", JSON.stringify(output, null, 2));
-    process.reallyExit();
-  }
-
-  // Port 0
-  // OUT
-  board.pinMode(7, board.MODES.OUTPUT);
-  // IN
-  board.pinMode(2, board.MODES.INPUT);
-  board.digitalRead(2, function(data) {
-    punchIn("D2");
-  });
-
-  // Port 1
-  // OUT
-  board.pinMode(8, board.MODES.OUTPUT);
-  // IN
-  board.pinMode(9, board.MODES.INPUT);
-  board.digitalRead(9, function(data) {
-    punchIn("D9");
-  });
-
-  // Read all analog pins (floating)
-  [0, 1, 2, 3].forEach(function(pin) {
-    board.analogRead(pin, function() {
-      punchIn("A" + pin);
-    });
-  });
-
-  // I2C
-  board.i2cConfig();
-
-  // BLINKM
-  board.i2cWrite(0x09, [0x6F]);
-  board.i2cRead(0x09, 0x67, 3, function(data) {
-    punchIn("BLINKM");
-  });
-
-  // ADXL345
-  board.i2cWrite(0x53, 0x2D, 0);
-  board.i2cWrite(0x53, 0x2D, 8);
-  board.i2cWrite(0x53, 0x31, 8);
-  board.i2cRead(0x53, 0x32, 6, function(data) {
-    punchIn("ADXL345");
-  });
-
-  if (argv.serial) {
-    board.serialConfig({
-      portId: SW_SERIAL0,
-      baud: 9600,
-      bytesToRead: 10,
-      rxPin: 10,
-      txPin: 11
-    });
-
-    // This appears to prevent reading from SW_SERIAL0?
-    // board.serialConfig({
-    //   portId: board.SERIAL_PORT_IDs.SW_SERIAL1,
-    //   baud: 9600,
-    //   bytesToRead: 0,
-    //   rxPin: 4,
-    //   txPin: 5
-    // });
-
-    // Connect some readable serial component
-    board.serialRead(SW_SERIAL0, function() {
-      board.serialFlush()
-      punchIn("SW_SERIAL0");
-    });
-  }
-
-  // Initiate all the writes.
-  setInterval(function() {
-    state ^= 1;
-
-    // Write digital out, Port 0, HIGH/LOW
-    board.digitalWrite(7, state);
-
-    // Write digital out, Port 1, HIGH/LOW
-    board.digitalWrite(8, state);
-
-    // Write BlinkM Color, RGB
-    board.i2cWrite(0x09, [0x6E, state ? 255 : 0, 0, 0]);
-
-    if (argv.serial) {
-      // This appears to create "hiccups" for the i2c write
-      // board.serialWrite(board.SERIAL_PORT_IDs.SW_SERIAL1, [1, 2, 3, 4]);
+    if (!argv.r) {
+      // Port 1
+      // OUT
+      board.pinMode(8, board.MODES.OUTPUT);
+      // IN
+      board.pinMode(9, board.MODES.INPUT);
+      board.digitalRead(9, function(data) {
+        punchIn("D9");
+      });
     }
-  }, 20);
 
-  process.on("SIGINT", summary);
+    // Read all analog pins (floating)
+    [0, 1, 2, 3].forEach(function(pin) {
+      board.analogRead(pin, function() {
+        punchIn("A" + pin);
+      });
+    });
 
-  setTimeout(summary, argv.time * 1000);
+    // I2C
+    board.i2cConfig();
+
+    // BLINKM
+    board.i2cWrite(0x09, [0x6F]);
+    board.i2cRead(0x09, 0x67, 3, function(data) {
+      punchIn("BLINKM");
+    });
+
+    // ADXL345
+    board.i2cWrite(0x53, 0x2D, 0);
+    board.i2cWrite(0x53, 0x2D, 8);
+    board.i2cWrite(0x53, 0x31, 8);
+    board.i2cRead(0x53, 0x32, 6, function(data) {
+      punchIn("ADXL345");
+    });
+
+    if (argv.serial && argv.r) {
+      board.serialConfig({
+        portId: isSoftSerial ? SW_R : HW_R,
+        baud: 9600,
+        bytesToRead: 10,
+        rxPin: 10,
+        txPin: 11
+      });
+
+      // Connect some readable serial component
+      board.serialRead(isSoftSerial ? SW_R : HW_R, function() {
+        board.serialFlush();
+        punchIn("SW_SERIAL0");
+      });
+    }
+
+    if (argv.serial && argv.w) {
+      board.serialConfig({
+        portId: isSoftSerial ? SW_W : HW_W,
+        baud: 9600,
+        bytesToRead: 0,
+        rxPin: 2,
+        txPin: 3
+      });
+    }
+
+    // Initiate all the writes.
+    setInterval(function() {
+      state ^= 1;
+
+      // If this is not a serial write measurement...
+      if (!argv.w) {
+        // Write digital out, Port 0, HIGH/LOW
+        board.digitalWrite(5, state);
+      }
+
+      // If this is not a serial read measurement...
+      if (!argv.r) {
+        // Write digital out, Port 1, HIGH/LOW
+        board.digitalWrite(8, state);
+      }
+
+      // Write BlinkM Color, RGB
+      board.i2cWrite(0x09, [0x6E, state ? 255 : 0, 0, 0]);
+
+      if (argv.serial && argv.w) {
+        board.serialWrite(isSoftSerial ? SW_W : HW_W, [1, 2, 3, 4]);
+      }
+    }, 20);
+
+    process.on("SIGINT", summary);
+
+    setTimeout(summary, argv.time * 1000);
+  });
 });
 
 function average(list) {
