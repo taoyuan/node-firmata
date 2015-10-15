@@ -1309,4 +1309,20 @@ describe("board", function() {
     should.equal(handler.getCall(0).args[0].length, 4);
     done();
   });
+
+  it("should emits 'sysex' event if no SYSEX_RESPONSE match", function(done) {
+    //var serialPort = new SerialPort("/path/to/fake/usb");
+    //var board = new Board(serialPort, function(err) {});
+
+    board.once("sysex", function(cmd, data) {
+      should.equal(cmd, 0x01);
+      should.equal(data.length, 1);
+      should.equal(data[0], 0xAA);
+      done();
+    });
+
+    serialPort.emit("data", [
+      START_SYSEX, 0x01, 0xAA, END_SYSEX
+    ]);
+  });
 });
