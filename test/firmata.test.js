@@ -774,17 +774,19 @@ describe("board", function() {
     serialPort.lastWrite[length * 2 + 4].should.equal(END_SYSEX);
     done();
   });
-  it("should be able to send sysex", function(done) {
+  it("should be able to send a custom command", function(done) {
     var bytes = new Buffer([0xAA, 0xBB]);
     var length = bytes.length;
-    board.sendSysex(0x11, bytes);
+    board.send(0x11, bytes);
     serialPort.lastWrite[0].should.equal(START_SYSEX);
     serialPort.lastWrite[1].should.equal(0x11);
+
+    var data = serialPort.lastWrite.slice(2, serialPort.lastWrite.length - 1);
+    data = Encoder7Bit.from7BitArray(data);
     for (var i = 0; i < length; i++) {
-      serialPort.lastWrite[i * 2 + 2].should.equal(bytes[i] & 0x7F);
-      serialPort.lastWrite[i * 2 + 3].should.equal((bytes[i] >> 7) & 0x7F);
+      data[i].should.equal(bytes[i]);
     }
-    serialPort.lastWrite[length * 2 + 2].should.equal(END_SYSEX);
+    serialPort.lastWrite[serialPort.lastWrite.length - 1].should.equal(END_SYSEX);
     done();
   });
   it("should emit a string event", function(done) {
